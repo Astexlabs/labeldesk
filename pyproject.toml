@@ -1,6 +1,10 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "labeldesk"
-version = "0.1.0"
+version = "0.2.0"
 description = "smart img labeling pipeline w cascading cost optimization"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -10,8 +14,26 @@ dependencies = [
     "scipy>=1.12",
     "imagehash>=4.3",
     "pytesseract>=0.3",
-    "onnxruntime>=1.17",
+    "typer>=0.12",
+    "rich>=13.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "textual>=0.58",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+ai = [
+    "anthropic>=0.25",
+    "openai>=1.0",
+    "google-generativeai>=0.5",
+]
+onnx = ["onnxruntime>=1.17"]
+
+[project.scripts]
+labeldesk = "labeldesk.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["labeldesk"]

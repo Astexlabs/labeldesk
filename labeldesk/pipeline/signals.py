@@ -49,40 +49,36 @@ def _classifyBrightness(img):
     avg = weightedSum / total
     if avg > 190:
         return "high-key"
-    if avg < 60:
-        return "dark"
     if avg < 30:
         return "silhouette"
+    if avg < 60:
+        return "dark"
     return "mid"
 
 
 def _dominantColor(img):
     small = img.resize((16, 16)).convert("RGB")
     px = np.array(small).reshape(-1, 3)
-    avg = tuple(int(c) for c in px.mean(axis=0))
-    return avg
+    return tuple(int(c) for c in px.mean(axis=0))
 
 
 def _checkMono(img):
     small = img.resize((32, 32)).convert("RGB")
     px = np.array(small).reshape(-1, 3)
-    stds = px.std(axis=0)
-    return bool(stds.max() < 30)
+    return bool(px.std(axis=0).max() < 30)
 
 
 def _checkSolid(img):
     small = img.resize((8, 8)).convert("RGB")
     px = np.array(small).reshape(-1, 3)
-    perChannel = px.std(axis=0)
-    return bool(perChannel.max() < 10)
+    return bool(px.std(axis=0).max() < 10)
 
 
 def _edgeDensity(img):
+    from scipy.signal import convolve2d
     grey = np.array(img.convert("L").resize((64, 64)), dtype=np.float32)
     kx = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]], dtype=np.float32)
     ky = kx.T
-    from scipy.signal import convolve2d
-
     gx = convolve2d(grey, kx, mode="valid")
     gy = convolve2d(grey, ky, mode="valid")
     mag = np.sqrt(gx**2 + gy**2)
@@ -109,7 +105,7 @@ def _parseExif(img):
 def _fnameHints(p: Path):
     stem = p.stem.lower()
     hints = []
-    if stem.startswith("img_") or stem.startswith("dsc"):
+    if stem.startswith(("img_", "dsc")):
         hints.append("camera-photo")
     if "screenshot" in stem:
         hints.append("screenshot")
@@ -121,8 +117,7 @@ def _fnameHints(p: Path):
 
 
 def _folderHints(p: Path):
-    parts = [part.lower() for part in p.parent.parts[-3:]]
-    return parts
+    return [part.lower() for part in p.parent.parts[-3:]]
 
 
 def extractSignals(imgPath: str | Path) -> FreeSignals:
@@ -132,19 +127,15 @@ def extractSignals(imgPath: str | Path) -> FreeSignals:
     w, h = img.size
     exif, gps, cam, focal, sw = _parseExif(img)
     return FreeSignals(
-        width=w,
-        height=h,
+        width=w, height=h,
         aspect=_classifyAspect(w, h),
         brightness=_classifyBrightness(img),
         dominant=_dominantColor(img),
         isMono=_checkMono(img),
         isSolid=_checkSolid(img),
         edgeDensity=_edgeDensity(img),
-        exif=exif,
-        gps=gps,
-        camModel=cam,
-        focalLen=focal,
-        software=sw,
+        exif=exif, gps=gps,
+        camModel=cam, focalLen=focal, software=sw,
         fnameHints=_fnameHints(p),
         folderHints=_folderHints(p),
     )

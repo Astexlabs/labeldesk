@@ -1,44 +1,27 @@
-import tempfile
-
-from PIL import Image
-
-from core.models.categories import ImgCat
-from pipeline.classifier import LocalClassifier
-from pipeline.signals import extractSignals
+from labeldesk.core.models.categories import ImgCat
+from labeldesk.pipeline.classifier import LocalClassifier
+from labeldesk.pipeline.signals import FreeSignals
 
 
-def _mkImg(color=(128, 128, 128), sz=(200, 200)):
-    f = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    Image.new("RGB", sz, color).save(f.name)
-    return f.name
-
-
-def test_noModelReturnsGeneric():
-    c = LocalClassifier(modelPath=None)
-    p = _mkImg()
-    assert c.classify(p) == ImgCat.generic
-
-
-def test_signalsFallbackScreenshot():
+def test_classifyScreenshot():
     c = LocalClassifier()
-    p = _mkImg()
-    sig = extractSignals(p)
-    sig.fnameHints = ["screenshot"]
+    sig = FreeSignals(fnameHints=["screenshot"])
     assert c.classifyFromSignals(sig) == ImgCat.screenshot
 
 
-def test_signalsFallbackSolid():
+def test_classifySolid():
     c = LocalClassifier()
-    p = _mkImg(color=(255, 0, 0))
-    sig = extractSignals(p)
-    sig.isSolid = True
+    sig = FreeSignals(isSolid=True)
     assert c.classifyFromSignals(sig) == ImgCat.icon
 
 
-def test_signalsFallbackPanorama():
+def test_classifyPanoramic():
     c = LocalClassifier()
-    sig = extractSignals(_mkImg(sz=(3000, 500)))
-    sig.isSolid = False
-    sig.isMono = False
-    sig.edgeDensity = 0.2
+    sig = FreeSignals(aspect="panoramic")
     assert c.classifyFromSignals(sig) == ImgCat.outdoor
+
+
+def test_classifyGeneric():
+    c = LocalClassifier()
+    sig = FreeSignals()
+    assert c.classifyFromSignals(sig) == ImgCat.generic

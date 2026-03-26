@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from core.models.categories import ImgCat
+from labeldesk.core.models.categories import ImgCat
 
 TOKEN_BUDGETS = {
     ImgCat.face: {"title": 40, "desc": 80, "tags": 20},
@@ -33,16 +32,10 @@ class Batch:
 
     def __post_init__(self):
         if not self.maxToks:
-            self.maxToks = TOKEN_BUDGETS.get(
-                self.cat, TOKEN_BUDGETS[ImgCat.generic]
-            )
+            self.maxToks = TOKEN_BUDGETS.get(self.cat, TOKEN_BUDGETS[ImgCat.generic])
 
 
-def buildBatches(
-    items: list[BatchItem],
-    batchSz: int = 5,
-    adaptive: bool = True,
-) -> list[Batch]:
+def buildBatches(items: list[BatchItem], batchSz: int = 5, adaptive: bool = True) -> list[Batch]:
     """group items by cat, then chunk into batches"""
     buckets: dict[ImgCat, list[BatchItem]] = {}
     for item in items:
@@ -59,8 +52,7 @@ def buildBatches(
             elif totalBudget > 200:
                 sz = max(3, sz)
         for i in range(0, len(catItems), sz):
-            chunk = catItems[i : i + sz]
-            batches.append(Batch(cat=cat, items=chunk))
+            batches.append(Batch(cat=cat, items=catItems[i:i + sz]))
     return batches
 
 

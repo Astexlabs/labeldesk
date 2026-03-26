@@ -3,25 +3,24 @@ import sqlite3
 import time
 from pathlib import Path
 
-from core.models.result import LabelResult
+from labeldesk.core.models.result import LabelResult
+from labeldesk.core.paths import cacheDbPath
 
 
 class ResultCache:
     """sqlite cache keyed by phash + mode + model"""
 
-    def __init__(self, dbPath: str | Path = ".labeldesk_cache.db"):
-        self._db = sqlite3.connect(str(dbPath))
+    def __init__(self, dbPath: str | Path | None = None):
+        p = dbPath or cacheDbPath()
+        self._db = sqlite3.connect(str(p), check_same_thread=False)
         self._initTbl()
 
     def _initTbl(self):
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS cache (
                 key TEXT PRIMARY KEY,
-                title TEXT,
-                desc TEXT,
-                tags TEXT,
-                src TEXT,
-                ts REAL
+                title TEXT, desc TEXT, tags TEXT,
+                src TEXT, ts REAL
             )
         """)
         self._db.commit()
@@ -37,11 +36,8 @@ class ResultCache:
         if row is None:
             return None
         return LabelResult(
-            title=row[0],
-            desc=row[1],
-            tags=json.loads(row[2]),
-            src=row[3],
-            cached=True,
+            title=row[0], desc=row[1],
+            tags=json.loads(row[2]), src=row[3], cached=True,
         )
 
     def put(self, phash: str, mode: str, model: str, result: LabelResult):
@@ -53,7 +49,6 @@ class ResultCache:
         self._db.commit()
 
     def getPartial(self, phash: str, model: str) -> dict:
-        """grab whatever partial results exist for any mode"""
         rows = self._db.execute(
             "SELECT key, title, desc, tags FROM cache WHERE key LIKE ?",
             (f"{phash}:%:{model}",),
@@ -69,6 +64,10 @@ class ResultCache:
     def evictOld(self, maxAgeSec: float = 86400 * 30):
         cutoff = time.time() - maxAgeSec
         self._db.execute("DELETE FROM cache WHERE ts < ?", (cutoff,))
+        self._db.commit()
+
+    def clear(self):
+        self._db.execute("DELETE FROM cache")
         self._db.commit()
 
     def close(self):

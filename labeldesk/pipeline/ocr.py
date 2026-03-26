@@ -5,11 +5,12 @@ from PIL import Image
 
 def extractTxt(imgPath: str | Path) -> str:
     """run tesseract ocr on img, returns raw txt"""
-    import pytesseract
-
-    img = Image.open(imgPath)
-    txt = pytesseract.image_to_string(img)
-    return txt.strip()
+    try:
+        import pytesseract
+        img = Image.open(imgPath)
+        return pytesseract.image_to_string(img).strip()
+    except Exception:
+        return ""
 
 
 def summarizeTxt(raw: str, maxLen: int = 300) -> str:

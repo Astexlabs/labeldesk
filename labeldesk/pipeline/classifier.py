@@ -3,21 +3,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from core.models.categories import ImgCat
+from labeldesk.core.models.categories import ImgCat
 
 _CAT_MAP = {
-    "screenshot": ImgCat.screenshot,
-    "document": ImgCat.document,
-    "face": ImgCat.face,
-    "outdoor": ImgCat.outdoor,
-    "indoor": ImgCat.indoor,
-    "food": ImgCat.food,
-    "product": ImgCat.product,
-    "abstract": ImgCat.abstract,
-    "diagram": ImgCat.diagram,
-    "icon": ImgCat.icon,
+    "screenshot": ImgCat.screenshot, "document": ImgCat.document,
+    "face": ImgCat.face, "outdoor": ImgCat.outdoor, "indoor": ImgCat.indoor,
+    "food": ImgCat.food, "product": ImgCat.product, "abstract": ImgCat.abstract,
+    "diagram": ImgCat.diagram, "icon": ImgCat.icon,
 }
-
 _LABELS = list(_CAT_MAP.keys()) + ["generic"]
 
 
@@ -29,20 +22,15 @@ class LocalClassifier:
         self._modelPath = modelPath
 
     def _loadModel(self):
-        if self._session is not None:
-            return
-        if self._modelPath is None:
+        if self._session is not None or self._modelPath is None:
             return
         import onnxruntime as ort
-
         self._session = ort.InferenceSession(self._modelPath)
 
     def _preprocess(self, imgPath: str | Path) -> np.ndarray:
         img = Image.open(imgPath).convert("RGB").resize((224, 224))
         arr = np.array(img, dtype=np.float32) / 255.0
-        arr = (arr - np.array([0.485, 0.456, 0.406])) / np.array(
-            [0.229, 0.224, 0.225]
-        )
+        arr = (arr - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
         arr = arr.transpose(2, 0, 1)
         return np.expand_dims(arr, 0).astype(np.float32)
 
@@ -53,11 +41,9 @@ class LocalClassifier:
         inp = self._preprocess(imgPath)
         inName = self._session.get_inputs()[0].name
         out = self._session.run(None, {inName: inp})
-        scores = out[0][0]
-        topIdx = int(np.argmax(scores))
+        topIdx = int(np.argmax(out[0][0]))
         if topIdx < len(_LABELS):
-            lbl = _LABELS[topIdx]
-            return _CAT_MAP.get(lbl, ImgCat.generic)
+            return _CAT_MAP.get(_LABELS[topIdx], ImgCat.generic)
         return ImgCat.generic
 
     def classifyFromSignals(self, signals) -> ImgCat:

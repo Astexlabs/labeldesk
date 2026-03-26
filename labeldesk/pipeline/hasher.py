@@ -19,13 +19,11 @@ class ImgHasher:
 
     def computeHash(self, imgPath: str | Path) -> str:
         img = Image.open(imgPath)
-        h = imagehash.phash(img)
-        return str(h)
+        return str(imagehash.phash(img))
 
     def findDupes(self, imgPath: str | Path) -> HashResult:
         h = self.computeHash(imgPath)
-        exact = []
-        near = []
+        exact, near = [], []
         hObj = imagehash.hex_to_hash(h)
         for storedHash, storedPath in self._store.items():
             dist = hObj - imagehash.hex_to_hash(storedHash)

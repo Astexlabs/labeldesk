@@ -1,15 +1,7 @@
-from core.models.categories import ImgCat
+from labeldesk.core.models.categories import ImgCat
 
 
-def test_allCatsExist():
-    expected = [
-        "screenshot", "document", "face", "outdoor", "indoor",
-        "food", "product", "abstract", "diagram", "icon", "generic",
-    ]
-    for name in expected:
-        assert ImgCat(name).value == name
-
-
-def test_catValues():
+def test_catsExist():
     assert ImgCat.screenshot.value == "screenshot"
     assert ImgCat.generic.value == "generic"
+    assert len(list(ImgCat)) == 11

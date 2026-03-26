@@ -1,4 +1,3 @@
-"""legacy entrypoint - use `labeldesk` cmd instead"""
 from labeldesk.cli.main import main
 
 if __name__ == "__main__":

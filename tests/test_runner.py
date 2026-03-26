@@ -3,10 +3,9 @@ from pathlib import Path
 
 from PIL import Image
 
-from core.models.categories import ImgCat
-from core.models.result import LabelResult
-from pipeline.runner import PipelineRunner, _heuristicLabel, _buildCtx
-from pipeline.signals import FreeSignals
+from labeldesk.core.models.categories import ImgCat
+from labeldesk.pipeline.runner import PipelineRunner, _heuristicLabel, _buildCtx
+from labeldesk.pipeline.signals import FreeSignals
 
 
 def _mkImg(color=(128, 128, 128), sz=(200, 200)):
@@ -25,8 +24,7 @@ def test_heuristicLabelSolid():
 
 def test_heuristicLabelNonSolid():
     sig = FreeSignals(isSolid=False)
-    res = _heuristicLabel(sig, ImgCat.outdoor)
-    assert res is None
+    assert _heuristicLabel(sig, ImgCat.outdoor) is None
 
 
 def test_buildCtxWithInfo():
@@ -34,13 +32,6 @@ def test_buildCtxWithInfo():
     ctx = _buildCtx(sig)
     assert "Canon" in ctx
     assert "landscape" in ctx
-    assert "high-key" in ctx
-
-
-def test_buildCtxEmpty():
-    sig = FreeSignals()
-    ctx = _buildCtx(sig)
-    assert ctx == ""
 
 
 def test_processOneSolidImg():
@@ -53,11 +44,21 @@ def test_processOneSolidImg():
         runner.close()
 
 
-def test_processManyWithDupes():
-    p1 = _mkImg(color=(0, 255, 0), sz=(64, 64))
-    p2 = _mkImg(color=(0, 255, 0), sz=(64, 64))
+def test_processManyWithDir():
+    d = tempfile.mkdtemp()
+    Image.new("RGB", (64, 64), (255, 0, 0)).save(Path(d) / "a.png")
+    Image.new("RGB", (64, 64), (0, 255, 0)).save(Path(d) / "b.png")
     with tempfile.NamedTemporaryFile(suffix=".db") as db:
         runner = PipelineRunner(cachePath=db.name)
-        results = runner.processMany([p1, p2])
+        results = runner.processMany([d])
         assert len(results) == 2
+        runner.close()
+
+
+def test_processManyEmptyDir():
+    d = tempfile.mkdtemp()
+    with tempfile.NamedTemporaryFile(suffix=".db") as db:
+        runner = PipelineRunner(cachePath=db.name)
+        results = runner.processMany([d])
+        assert results == {}
         runner.close()

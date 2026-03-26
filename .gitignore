@@ -1,4 +1,3 @@
-# Python-generated files
 __pycache__/
 *.py[oc]
 build/
@@ -6,8 +5,21 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
 .venv
+.env
+
+# labeldesk byproducts
+.cache/
+.labeldesk_cache.db
+*.db
+
+# user home data
+~/.labeldesk/
+
+# node
+node_modules/
+.next/
+web/.next/
+web/node_modules/
 
 example/
-.cache
