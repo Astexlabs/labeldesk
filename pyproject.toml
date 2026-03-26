@@ -1,7 +1,17 @@
 [project]
 name = "labeldesk"
 version = "0.1.0"
-description = "Add your description here"
+description = "smart img labeling pipeline w cascading cost optimization"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pillow>=10.0",
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "imagehash>=4.3",
+    "pytesseract>=0.3",
+    "onnxruntime>=1.17",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
