@@ -51,7 +51,17 @@ def _startApi(host: str, port: int):
     uvicorn.Server(cfg).run()
 
 
+import importlib.resources
+
 def _findWebDir() -> Path | None:
+    try:
+        web_path = importlib.resources.files('labeldesk').joinpath('web')
+        if web_path.joinpath('package.json').is_file():
+            return Path(str(web_path))
+    except (ModuleNotFoundError, FileNotFoundError):
+        pass
+
+    # Fallback to original logic for development environments
     here = Path(__file__).resolve()
     for p in [*here.parents, Path.cwd()]:
         cand = p / "web" / "package.json"
