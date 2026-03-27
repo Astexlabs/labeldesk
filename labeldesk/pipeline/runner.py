@@ -3,6 +3,7 @@ from pathlib import Path
 from labeldesk.core.models.categories import ImgCat
 from labeldesk.core.models.result import LabelResult
 from labeldesk.core.models.base import BaseAdapter
+from labeldesk.core.models.schema import resolveFields, buildPrompt, parseResp
 from labeldesk.core.paths import expandImgPaths, cacheDbPath
 from labeldesk.pipeline.batcher import BatchItem, buildBatches, budgetFor
 from labeldesk.pipeline.cache import ResultCache
@@ -48,11 +49,13 @@ class PipelineRunner:
         cachePath: str | None = None,
         batchSz: int = 5,
         collectionCtx: str = "",
+        fields: str | list[str] | None = None,
         progressCb=None,
     ):
         self._adapter = adapter
         self._model = modelName
         self._mode = mode
+        self._fields = resolveFields(fields) if fields else []
         self._hasher = ImgHasher()
         self._classifier = LocalClassifier(modelPath=onnxPath)
         self._cache = ResultCache(dbPath=cachePath or cacheDbPath())
@@ -185,7 +188,6 @@ class PipelineRunner:
     def _visionPath(self, imgPath: str | Path, phash: str, cat: ImgCat, signals: FreeSignals) -> LabelResult:
         if not self._adapter:
             return LabelResult(title="no-adapter", src="none")
-        budget = budgetFor(cat)
         ctx = _buildCtx(signals)
         ctxLine = ""
         if self._collectionCtx:
@@ -193,13 +195,20 @@ class PipelineRunner:
         if ctx:
             ctxLine += f"image info: {ctx}. "
 
-        prompt = f"{ctxLine}give a short {self._mode} for this {cat.value} image. no preamble."
-        maxToks = budget.get(self._mode[:4] if self._mode.startswith("desc") else self._mode, 100)
-
         imgBytes = normalizeImg(imgPath)
         try:
-            raw = self._adapter.visionInfer(imgBytes, prompt, maxToks=maxToks)
-            res = LabelResult(title=raw.strip(), src=f"vision-{cat.value}")
+            if self._fields:
+                prompt, maxToks = buildPrompt(self._fields, ctxLine.rstrip(". "))
+                raw = self._adapter.visionInfer(imgBytes, prompt, maxToks=maxToks)
+                data = parseResp(raw, self._fields)
+                res = LabelResult.fromFields(data, src=f"vision-{cat.value}")
+            else:
+                budget = budgetFor(cat)
+                prompt = f"{ctxLine}give a short {self._mode} for this {cat.value} image. no preamble."
+                mk = self._mode[:4] if self._mode.startswith("desc") else self._mode
+                maxToks = budget.get(mk, 100)
+                raw = self._adapter.visionInfer(imgBytes, prompt, maxToks=maxToks)
+                res = LabelResult(title=raw.strip(), src=f"vision-{cat.value}")
         except Exception as e:
             res = LabelResult(title=f"err: {e}", src="error")
         self._cache.put(phash, self._mode, self._model, res)

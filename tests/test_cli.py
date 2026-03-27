@@ -48,10 +48,32 @@ def test_labelHelpHasExamples():
 
 def test_labelHelpExplainsEveryOpt():
     res = runner.invoke(app, ["label", "--help"])
-    assert "ai backend" in res.output
+    assert "provider" in res.output
     assert "what to generate" in res.output
     assert "scan subdirs" in res.output
     assert "collection hint" in res.output
+
+
+def test_providerCmds():
+    res = runner.invoke(app, ["providers", "list"])
+    assert res.exit_code == 0
+    for p in ["Groq", "Lightning", "Claude", "Ollama"]:
+        assert p in res.output
+    assert "connect" in res.output
+
+
+def test_providerConnectUnknown():
+    res = runner.invoke(app, ["providers", "connect", "nope"])
+    assert res.exit_code == 1
+    assert "unknown provider" in res.output
+
+
+def test_modelFlagAcceptsSlash():
+    from labeldesk.cli.main import _parseModel
+    from labeldesk.core.config import Cfg
+    cfg = Cfg(data={"groq": {"model_id": "old"}})
+    assert _parseModel("groq", cfg) == ("groq", "old")
+    assert _parseModel("groq/llama-3.2-90b", cfg) == ("groq", "llama-3.2-90b")
 
 
 def test_configSetHelpHasExample():

@@ -4,10 +4,8 @@ from labeldesk.core.models.registry import getAdapter, listAdapters, adapterInfo
 
 def test_listAdapters():
     names = listAdapters()
-    assert "anthropic" in names
-    assert "openai" in names
-    assert "gemini" in names
-    assert "ollama" in names
+    for n in ["anthropic", "openai", "gemini", "groq", "lightning", "ollama"]:
+        assert n in names
 
 
 def test_getAdapter():
@@ -45,3 +43,23 @@ def test_adapterInfoUnknown():
     assert info["name"] == "nope"
     assert info["displayName"] == "nope"
     assert info["defaultModelId"] == ""
+
+
+def test_groqAdapter():
+    a = getAdapter("groq", ModelCfg(apiKey="gsk_x"))
+    assert a.name == "groq"
+    assert a.isAvail()
+    assert not getAdapter("groq", ModelCfg()).isAvail()
+    info = adapterInfo("groq")
+    assert "Groq" in info["displayName"]
+    assert info["needs"] == "api_key"
+
+
+def test_lightningAdapter():
+    a = getAdapter("lightning", ModelCfg(apiKey="k", host="https://x.litng.ai"))
+    assert a.name == "lightning"
+    assert a.isAvail()
+    assert not getAdapter("lightning", ModelCfg(apiKey="k")).isAvail()
+    assert not getAdapter("lightning", ModelCfg(host="h")).isAvail()
+    info = adapterInfo("lightning")
+    assert "Lightning" in info["displayName"]

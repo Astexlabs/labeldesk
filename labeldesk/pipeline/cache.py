@@ -20,9 +20,13 @@ class ResultCache:
             CREATE TABLE IF NOT EXISTS cache (
                 key TEXT PRIMARY KEY,
                 title TEXT, desc TEXT, tags TEXT,
-                src TEXT, ts REAL
+                src TEXT, ts REAL, extra TEXT DEFAULT '{}'
             )
         """)
+        try:
+            self._db.execute("ALTER TABLE cache ADD COLUMN extra TEXT DEFAULT '{}'")
+        except sqlite3.OperationalError:
+            pass
         self._db.commit()
 
     def _makeKey(self, phash: str, mode: str, model: str) -> str:
@@ -31,20 +35,23 @@ class ResultCache:
     def get(self, phash: str, mode: str, model: str) -> LabelResult | None:
         key = self._makeKey(phash, mode, model)
         row = self._db.execute(
-            "SELECT title, desc, tags, src FROM cache WHERE key = ?", (key,)
+            "SELECT title, desc, tags, src, extra FROM cache WHERE key = ?", (key,)
         ).fetchone()
         if row is None:
             return None
         return LabelResult(
             title=row[0], desc=row[1],
-            tags=json.loads(row[2]), src=row[3], cached=True,
+            tags=json.loads(row[2]), src=row[3],
+            extra=json.loads(row[4] or "{}"), cached=True,
         )
 
     def put(self, phash: str, mode: str, model: str, result: LabelResult):
         key = self._makeKey(phash, mode, model)
         self._db.execute(
-            "INSERT OR REPLACE INTO cache (key, title, desc, tags, src, ts) VALUES (?, ?, ?, ?, ?, ?)",
-            (key, result.title, result.desc, json.dumps(result.tags), result.src, time.time()),
+            "INSERT OR REPLACE INTO cache (key, title, desc, tags, src, ts, extra) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (key, result.title, result.desc, json.dumps(result.tags),
+             result.src, time.time(), json.dumps(result.extra)),
         )
         self._db.commit()
 

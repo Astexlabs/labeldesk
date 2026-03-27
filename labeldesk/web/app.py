@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from labeldesk.core.config import loadCfg
 from labeldesk.core.models.base import ModelCfg
-from labeldesk.core.models.registry import getAdapter, listAdapters, adapterInfo
+from labeldesk.core.models.registry import getAdapter, listAdapters, adapterInfo, listProviders
 from labeldesk.core.output.formatters import fmtResults
 from labeldesk.core.paths import uploadDir, expandImgPaths
 from labeldesk.core.storage.job_store import JobStore
@@ -40,6 +40,34 @@ def createApp() -> FastAPI:
     @app.get("/api/health")
     def health():
         return {"ok": True}
+
+    @app.get("/api/providers")
+    def providers():
+        cfg = loadCfg()
+        dflt = cfg.get("default", "model", "")
+        out = []
+        for p in listProviders():
+            name = p["name"]
+            sec = cfg.section(name)
+            try:
+                mcfg = ModelCfg(
+                    apiKey=cfg.get(name, "api_key", ""),
+                    modelId=sec.get("model_id", ""),
+                    host=sec.get("host", ""),
+                )
+                avail = getAdapter(name, mcfg).isAvail()
+            except Exception:
+                avail = False
+            missing = [c["key"] for c in p["creds"]
+                       if not cfg.get(name, c["key"], c.get("default", ""))]
+            out.append({
+                **p,
+                "available": avail,
+                "missing": missing,
+                "modelId": sec.get("model_id") or p["defaultModelId"],
+                "isDefault": name == dflt,
+            })
+        return out
 
     @app.get("/api/models")
     def models():

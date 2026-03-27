@@ -24,6 +24,10 @@ def cfgPath() -> Path:
     return appDir() / "config.toml"
 
 
+def credsPath() -> Path:
+    return appDir() / "credentials.toml"
+
+
 def cacheDbPath() -> Path:
     return cacheDir() / "labeldesk_cache.db"
 
