@@ -1,0 +1,13 @@
+.venv
+.git
+__pycache__
+*.pyc
+*.egg-info
+.cache
+*.db
+node_modules
+.next
+web
+example
+tests
+.github

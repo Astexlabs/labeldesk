@@ -1,9 +1,11 @@
 import os
 import tomllib
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from labeldesk.core.paths import cfgPath
+import yaml
+
+from labeldesk.core.paths import cfgPath, appDir
 
 
 _DEFAULTS = {
@@ -41,6 +43,9 @@ class Cfg:
 
     def save(self, path: Path | None = None):
         p = path or cfgPath()
+        if any(s in (".yaml", ".yml") for s in p.suffixes):
+            p.write_text(yaml.safe_dump(self.data, sort_keys=False))
+            return
         lines = []
         for sec, vals in self.data.items():
             lines.append(f"[{sec}]")
@@ -55,12 +60,30 @@ class Cfg:
         p.write_text("\n".join(lines))
 
 
+def _findCfgFile() -> Path | None:
+    """look for cfg in cwd then home, yaml > toml"""
+    for base in [Path.cwd(), appDir()]:
+        for name in ["labeldesk.yaml", "labeldesk.yml", "config.yaml", "config.toml"]:
+            p = base / name
+            if p.exists():
+                return p
+    return None
+
+
+def _isYaml(p: Path) -> bool:
+    return any(s in (".yaml", ".yml") for s in p.suffixes)
+
+
 def loadCfg(path: Path | None = None) -> Cfg:
-    p = path or cfgPath()
+    p = path or _findCfgFile() or cfgPath()
     merged = {k: dict(v) for k, v in _DEFAULTS.items()}
     if p.exists():
-        with open(p, "rb") as f:
-            user = tomllib.load(f)
+        if _isYaml(p):
+            user = yaml.safe_load(p.read_text()) or {}
+        else:
+            with open(p, "rb") as f:
+                user = tomllib.load(f)
         for sec, vals in user.items():
-            merged.setdefault(sec, {}).update(vals)
+            if isinstance(vals, dict):
+                merged.setdefault(sec, {}).update(vals)
     return Cfg(data=merged)
