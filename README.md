@@ -113,12 +113,13 @@ pages: `/` (job list), `/upload` (drag-drop + opts), `/jobs/[id]` (live progress
 
 ## tui
 
-`labeldesk tui` — textual terminal ui with tabs:
+`labeldesk` (or `labeldesk tui`) — full terminal ui, runs jobs without needing the web dashboard:
 
+- **run** — pick a folder, add context, choose model/mode/output, hit *scan* to preview or *run labeling* to go. progress + results stream into the log pane
 - **settings** — default model, mode, output fmt, batch size, web port
 - **api keys** — anthropic/openai/gemini keys + model ids
 - **ollama** — host config + connection test
-- **history** — job table
+- **history** — job table (auto-refreshes after a run)
 - **cache** — clear result cache / job history
 
 keys: `q` quit, `s` save, `r` refresh

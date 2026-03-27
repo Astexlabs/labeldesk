@@ -16,10 +16,21 @@ from labeldesk.core.paths import expandImgPaths
 from labeldesk.core.storage.job_store import JobStore
 from labeldesk.pipeline.runner import PipelineRunner
 
-app = typer.Typer(help="labeldesk - smart img labeler w cascading cost optimization")
-cfgApp = typer.Typer(help="manage config")
-modelsApp = typer.Typer(help="manage ai models")
-jobApp = typer.Typer(help="view job history")
+app = typer.Typer(
+    help="""labeldesk - smart img labeler w cascading cost optimization.
+
+\b
+quick start:
+  labeldesk                      open interactive tui (pick folder + run)
+  labeldesk label ./pics         label a folder right now
+  labeldesk config show          see current settings
+  labeldesk models list          check which ai backends are ready""",
+    no_args_is_help=False,
+    rich_markup_mode="rich",
+)
+cfgApp = typer.Typer(help="get/set config values (model, api keys, defaults)")
+modelsApp = typer.Typer(help="list + test ai model backends")
+jobApp = typer.Typer(help="browse past labeling runs")
 app.add_typer(cfgApp, name="config")
 app.add_typer(modelsApp, name="models")
 app.add_typer(jobApp, name="job")
@@ -48,18 +59,52 @@ def _mkAdapter(name: str, cfg):
 
 @app.command()
 def label(
-    paths: list[str] = typer.Argument(..., help="img files or dirs"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
-    mode: str = typer.Option("title", "--mode"),
-    output: str = typer.Option("preview", "--output", "-o"),
-    out_dir: Optional[Path] = typer.Option(None, "--out-dir"),
-    recursive: bool = typer.Option(False, "--recursive", "-r"),
-    batch_size: int = typer.Option(5, "--batch-size"),
-    ctx: str = typer.Option("", "--ctx"),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    no_web: bool = typer.Option(False, "--no-web"),
+    paths: list[str] = typer.Argument(..., help="img files or dirs to label"),
+    model: Optional[str] = typer.Option(
+        None, "--model", "-m",
+        help="ai backend: anthropic | openai | gemini | ollama (default from config)",
+    ),
+    mode: str = typer.Option(
+        "title", "--mode",
+        help="what to generate: title | description | both | tags",
+    ),
+    output: str = typer.Option(
+        "preview", "--output", "-o",
+        help="result fmt: preview | rename | copy-rename | csv | json | txt",
+    ),
+    out_dir: Optional[Path] = typer.Option(
+        None, "--out-dir",
+        help="where to write files (for copy-rename/csv/json/txt)",
+    ),
+    recursive: bool = typer.Option(
+        False, "--recursive", "-r",
+        help="scan subdirs too",
+    ),
+    batch_size: int = typer.Option(
+        5, "--batch-size",
+        help="imgs per ai batch (bigger = cheaper but slower feedback)",
+    ),
+    ctx: str = typer.Option(
+        "", "--ctx",
+        help="collection hint, e.g. 'wedding photos' - improves labels",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="estimate cost + count imgs, don't actually run",
+    ),
+    no_web: bool = typer.Option(
+        False, "--no-web",
+        help="skip launching the web dashboard alongside",
+    ),
 ):
-    """label imgs - the main cmd"""
+    """run the labeling pipeline on imgs.
+
+    \b
+    examples:
+      labeldesk label ./photos
+      labeldesk label ./photos -r --mode tags --output json
+      labeldesk label a.jpg b.png --ctx "product shots" --dry-run
+    """
     cfg = loadCfg()
     modelName = model or cfg.get("default", "model", "anthropic")
 
@@ -126,10 +171,10 @@ def label(
 
 @app.command()
 def serve(
-    host: str = typer.Option(None, "--host"),
-    port: int = typer.Option(None, "--port"),
+    host: str = typer.Option(None, "--host", help="bind addr (default 127.0.0.1)"),
+    port: int = typer.Option(None, "--port", help="bind port (default 7432)"),
 ):
-    """start web dashboard only"""
+    """start the web dashboard (fastapi, foreground)."""
     cfg = loadCfg()
     h = host or cfg.get("default", "web_host", "127.0.0.1")
     p = port or int(cfg.get("default", "web_port", 7432))
@@ -139,14 +184,23 @@ def serve(
 
 @app.command()
 def tui():
-    """open interactive settings tui"""
+    """open the interactive terminal ui - pick a folder, set opts, run labeling."""
     from labeldesk.tui.app import LabelDeskTui
     LabelDeskTui().run()
 
 
 @cfgApp.command("set")
-def cfgSet(key: str, value: str):
-    """set config val, e.g. anthropic.api_key sk-..."""
+def cfgSet(
+    key: str = typer.Argument(..., help="section.key, e.g. anthropic.api_key"),
+    value: str = typer.Argument(..., help="the value to store"),
+):
+    """set a config value.
+
+    \b
+    examples:
+      labeldesk config set default.model ollama
+      labeldesk config set anthropic.api_key sk-ant-...
+    """
     cfg = loadCfg()
     if "." not in key:
         con.print("[red]use section.key fmt[/red]")
@@ -158,8 +212,8 @@ def cfgSet(key: str, value: str):
 
 
 @cfgApp.command("get")
-def cfgGet(key: str):
-    """get config val"""
+def cfgGet(key: str = typer.Argument(..., help="section.key to read")):
+    """read one config value (keys are masked)."""
     cfg = loadCfg()
     sec, k = key.split(".", 1)
     val = cfg.get(sec, k)
@@ -170,7 +224,7 @@ def cfgGet(key: str):
 
 @cfgApp.command("show")
 def cfgShow():
-    """show full config"""
+    """print the whole merged config as a table."""
     cfg = loadCfg()
     tbl = Table(title="config")
     tbl.add_column("section")
@@ -186,7 +240,7 @@ def cfgShow():
 
 @modelsApp.command("list")
 def modelsList():
-    """list available model adapters"""
+    """show every ai backend + whether it's reachable/keyed."""
     cfg = loadCfg()
     tbl = Table(title="models")
     tbl.add_column("name")
@@ -202,8 +256,8 @@ def modelsList():
 
 
 @modelsApp.command("test")
-def modelsTest(name: str):
-    """test a model connection"""
+def modelsTest(name: str = typer.Argument(..., help="adapter name, e.g. ollama")):
+    """ping one backend to check its key/connection."""
     cfg = loadCfg()
     try:
         a = _mkAdapter(name, cfg)
@@ -216,8 +270,8 @@ def modelsTest(name: str):
 
 
 @jobApp.command("history")
-def jobHistory(limit: int = typer.Option(20, "--limit", "-n")):
-    """show recent jobs"""
+def jobHistory(limit: int = typer.Option(20, "--limit", "-n", help="max rows")):
+    """list recent labeling runs (newest first)."""
     store = JobStore()
     tbl = Table(title="jobs")
     for c in ["id", "status", "files", "model", "mode", "cost"]:
@@ -230,8 +284,8 @@ def jobHistory(limit: int = typer.Option(20, "--limit", "-n")):
 
 
 @jobApp.command("show")
-def jobShow(job_id: str):
-    """show job details"""
+def jobShow(job_id: str = typer.Argument(..., help="job id from history")):
+    """dump full details + results for one job."""
     store = JobStore()
     j = store.get(job_id)
     if not j:
@@ -244,12 +298,15 @@ def jobShow(job_id: str):
 @app.callback(invoke_without_command=True)
 def _root(
     ctx: typer.Context,
-    web: bool = typer.Option(False, "--web", help="start web dashboard"),
-    host: Optional[str] = typer.Option(None, "--host"),
-    port: Optional[int] = typer.Option(None, "--port"),
-    cfg_file: Optional[Path] = typer.Option(None, "--config", "-c", help="path to yaml/toml cfg"),
+    web: bool = typer.Option(False, "--web", help="start web dashboard instead of tui"),
+    host: Optional[str] = typer.Option(None, "--host", help="web bind addr"),
+    port: Optional[int] = typer.Option(None, "--port", help="web bind port"),
+    cfg_file: Optional[Path] = typer.Option(
+        None, "--config", "-c",
+        help="explicit yaml/toml config file (else auto-discover)",
+    ),
 ):
-    """bare cmd -> tui. --web -> web dashboard."""
+    """with no subcmd: opens the interactive tui where u can pick imgs + run."""
     if cfg_file:
         os.environ["LABELDESK_CONFIG"] = str(cfg_file)
     if ctx.invoked_subcommand is not None:
