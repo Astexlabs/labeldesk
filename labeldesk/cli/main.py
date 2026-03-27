@@ -14,7 +14,7 @@ from rich.table import Table
 
 from labeldesk.core.config import loadCfg
 from labeldesk.core.models.base import ModelCfg
-from labeldesk.core.models.registry import getAdapter, listAdapters
+from labeldesk.core.models.registry import getAdapter, listAdapters, adapterInfo
 from labeldesk.core.output.formatters import fmtResults
 from labeldesk.core.paths import expandImgPaths
 from labeldesk.core.storage.job_store import JobStore
@@ -308,35 +308,90 @@ def cfgShow():
     con.print(tbl)
 
 
-@modelsApp.command("list")
-def modelsList():
-    """show every ai backend + whether it's reachable/keyed."""
-    cfg = loadCfg()
-    tbl = Table(title="models")
-    tbl.add_column("name")
-    tbl.add_column("available")
+def _modelRows(cfg):
+    dflt = cfg.get("default", "model", "")
     for name in listAdapters():
+        info = adapterInfo(name)
+        sec = cfg.section(name)
+        mid = sec.get("model_id") or info["defaultModelId"]
         try:
             a = _mkAdapter(name, cfg)
-            avail = "[green]yes[/green]" if a.isAvail() else "[red]no[/red]"
-        except Exception:
-            avail = "[red]err[/red]"
-        tbl.add_row(name, avail)
+            ok = a.isAvail()
+            why = "" if ok else ("no key" if info["needs"] == "api_key" else "unreachable")
+        except Exception as e:
+            ok, why = False, str(e)[:40]
+        yield name, info, mid, ok, why, (name == dflt)
+
+
+@modelsApp.command("list")
+def modelsList():
+    """show every ai backend w display name, model id, status."""
+    cfg = loadCfg()
+    tbl = Table(title="models", show_lines=False)
+    tbl.add_column("", width=2)
+    tbl.add_column("provider", style="bold")
+    tbl.add_column("model id", style="dim")
+    tbl.add_column("status")
+    tbl.add_column("note", style="dim")
+    for name, info, mid, ok, why, isDflt in _modelRows(cfg):
+        mark = "[cyan]●[/cyan]" if isDflt else " "
+        stat = "[green]ready[/green]" if ok else f"[red]✗[/red]"
+        tbl.add_row(mark, info["displayName"], mid, stat, why or info["desc"])
     con.print(tbl)
+    con.print("[dim]● = default · change with: labeldesk models pick[/dim]")
+
+
+@modelsApp.command("pick")
+def modelsPick():
+    """interactively pick default model + set its key if needed."""
+    cfg = loadCfg()
+    rows = list(_modelRows(cfg))
+    con.print("[bold]pick a default model:[/bold]\n")
+    for i, (name, info, mid, ok, why, isDflt) in enumerate(rows, 1):
+        stat = "[green]ready[/green]" if ok else f"[yellow]{why}[/yellow]"
+        mark = "[cyan]●[/cyan] " if isDflt else "  "
+        con.print(f"  {mark}[bold]{i}[/bold]. {info['displayName']:<22} "
+                  f"[dim]{mid}[/dim]  {stat}")
+        con.print(f"       [dim]{info['desc']}[/dim]")
+    n = typer.prompt("\nnumber", type=int)
+    if not 1 <= n <= len(rows):
+        con.print("[red]bad pick[/red]")
+        raise typer.Exit(1)
+    name, info, mid, ok, why, _ = rows[n - 1]
+    cfg.set("default", "model", name)
+
+    if not ok and info["needs"] == "api_key":
+        key = typer.prompt(f"{info['displayName']} api key", hide_input=True, default="")
+        if key:
+            cfg.set(name, "api_key", key)
+    elif not ok and info["needs"] == "host":
+        host = typer.prompt("ollama host", default="http://localhost:11434")
+        cfg.set(name, "host", host)
+
+    newMid = typer.prompt("model id", default=mid)
+    if newMid != mid:
+        cfg.set(name, "model_id", newMid)
+
+    cfg.save()
+    con.print(f"[green]✓ default → {info['displayName']} ({newMid})[/green]")
 
 
 @modelsApp.command("test")
 def modelsTest(name: str = typer.Argument(..., help="adapter name, e.g. ollama")):
     """ping one backend to check its key/connection."""
     cfg = loadCfg()
+    info = adapterInfo(name)
     try:
         a = _mkAdapter(name, cfg)
         if a.isAvail():
-            con.print(f"[green]{name} ok[/green]")
+            con.print(f"[green]✓ {info['displayName']} ready[/green]")
         else:
-            con.print(f"[yellow]{name} not reachable / no key[/yellow]")
+            hint = f"set key: labeldesk config set {name}.api_key ..." \
+                if info["needs"] == "api_key" else f"check {name}.host is running"
+            con.print(f"[yellow]✗ {info['displayName']} not ready[/yellow]")
+            con.print(f"[dim]  {hint}[/dim]")
     except Exception as e:
-        con.print(f"[red]{name} err: {e}[/red]")
+        con.print(f"[red]✗ {name}: {e}[/red]")
 
 
 @jobApp.command("history")

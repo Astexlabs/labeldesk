@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from labeldesk.core.config import loadCfg
 from labeldesk.core.models.base import ModelCfg
-from labeldesk.core.models.registry import getAdapter, listAdapters
+from labeldesk.core.models.registry import getAdapter, listAdapters, adapterInfo
 from labeldesk.core.output.formatters import fmtResults
 from labeldesk.core.paths import uploadDir, expandImgPaths
 from labeldesk.core.storage.job_store import JobStore
@@ -47,6 +47,8 @@ def createApp() -> FastAPI:
         out = []
         for name in listAdapters():
             sec = cfg.section(name)
+            info = adapterInfo(name)
+            reason = ""
             try:
                 mcfg = ModelCfg(
                     apiKey=cfg.get(name, "api_key", ""),
@@ -55,9 +57,18 @@ def createApp() -> FastAPI:
                 )
                 a = getAdapter(name, mcfg)
                 avail = a.isAvail()
-            except Exception:
+                if not avail:
+                    reason = "no api key set" if info["needs"] == "api_key" else "cant reach host"
+            except Exception as e:
                 avail = False
-            out.append({"name": name, "available": avail, "modelId": sec.get("model_id", "")})
+                reason = str(e)
+            out.append({
+                **info,
+                "available": avail,
+                "reason": reason,
+                "modelId": sec.get("model_id") or info["defaultModelId"],
+                "configured": bool(cfg.get(name, "api_key", "") or sec.get("host")),
+            })
         return out
 
     @app.get("/api/config")
@@ -105,6 +116,16 @@ def createApp() -> FastAPI:
             totalFiles=len(imgPaths), status="queued",
         )
         store.close()
+
+        info = adapterInfo(modelName)
+        needs = info["needs"]
+        if needs == "api_key" and not cfg.get(modelName, "api_key", ""):
+            raise HTTPException(400, {
+                "msg": f"{info['displayName']} needs an api key",
+                "hint": f"add it via the model picker or: labeldesk config set {modelName}.api_key ...",
+                "field": f"{modelName}.api_key",
+            })
+
         bg.add_task(_runJob, job.id, req, modelName)
         return {"jobId": job.id, "totalFiles": len(imgPaths)}
 

@@ -1,5 +1,5 @@
 from labeldesk.core.models.base import ModelCfg
-from labeldesk.core.models.registry import getAdapter, listAdapters
+from labeldesk.core.models.registry import getAdapter, listAdapters, adapterInfo
 
 
 def test_listAdapters():
@@ -21,3 +21,27 @@ def test_unknownAdapter():
         assert False
     except ValueError:
         pass
+
+
+def test_adapterInfoShape():
+    info = adapterInfo("anthropic")
+    assert info["name"] == "anthropic"
+    assert "Claude" in info["displayName"]
+    assert info["defaultModelId"]
+    assert info["needs"] == "api_key"
+    assert info["desc"]
+    assert info["costPer1kIn"] > 0
+
+
+def test_adapterInfoOllama():
+    info = adapterInfo("ollama")
+    assert info["needs"] == "host"
+    assert info["defaultModelId"] == "llava"
+    assert info["costPer1kIn"] == 0.0
+
+
+def test_adapterInfoUnknown():
+    info = adapterInfo("nope")
+    assert info["name"] == "nope"
+    assert info["displayName"] == "nope"
+    assert info["defaultModelId"] == ""
