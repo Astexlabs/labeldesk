@@ -1,8 +1,16 @@
+import re
+
 from typer.testing import CliRunner
 
 from labeldesk.cli.main import app, _findWebDir, _npmCmd
 
 runner = CliRunner()
+
+_ansi_re = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    return _ansi_re.sub("", text)
 
 
 def test_rootHelpShowsQuickstart():
@@ -35,7 +43,7 @@ def test_labelHelpHasExamples():
     res = runner.invoke(app, ["label", "--help"])
     assert res.exit_code == 0
     assert "examples:" in res.output
-    assert "--dry-run" in res.output
+    assert "--dry-run" in _plain(res.output)
 
 
 def test_labelHelpExplainsEveryOpt():
@@ -71,7 +79,7 @@ def test_webHelpMentionsBothParts():
     assert res.exit_code == 0
     assert "fastapi" in res.output
     assert "nextjs" in res.output
-    assert "--api-only" in res.output
+    assert "--api-only" in _plain(res.output)
     assert "3000" in res.output
 
 
