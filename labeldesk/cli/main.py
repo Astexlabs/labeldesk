@@ -1,4 +1,8 @@
 import os
+import shutil
+import signal
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
@@ -23,6 +27,7 @@ app = typer.Typer(
 quick start:
   labeldesk                      open interactive tui (pick folder + run)
   labeldesk label ./pics         label a folder right now
+  labeldesk web                  launch web dashboard (api + ui)
   labeldesk config show          see current settings
   labeldesk models list          check which ai backends are ready""",
     no_args_is_help=False,
@@ -38,12 +43,40 @@ app.add_typer(jobApp, name="job")
 con = Console()
 
 
-def _startWeb(host: str, port: int):
+def _startApi(host: str, port: int):
     import uvicorn
     from labeldesk.web.app import createApp
     srv = createApp()
     cfg = uvicorn.Config(srv, host=host, port=port, log_level="warning")
     uvicorn.Server(cfg).run()
+
+
+import importlib.resources
+
+def _findWebDir() -> Path | None:
+    try:
+        web_path = importlib.resources.files('labeldesk').joinpath('web')
+        if web_path.joinpath('package.json').is_file():
+            return Path(str(web_path))
+    except (ModuleNotFoundError, FileNotFoundError):
+        pass
+
+    # Fallback to original logic for development environments
+    here = Path(__file__).resolve()
+    for p in [*here.parents, Path.cwd()]:
+        cand = p / "web" / "package.json"
+        if cand.exists():
+            return cand.parent
+    return None
+
+
+def _npmCmd(webDir: Path, uiPort: int) -> list[str]:
+    npm = shutil.which("npm")
+    if not npm:
+        return []
+    hasBuild = (webDir / ".next").exists()
+    script = "start" if hasBuild else "dev"
+    return [npm, "run", script, "--", "-p", str(uiPort)]
 
 
 def _mkAdapter(name: str, cfg):
@@ -92,10 +125,6 @@ def label(
         False, "--dry-run",
         help="estimate cost + count imgs, don't actually run",
     ),
-    no_web: bool = typer.Option(
-        False, "--no-web",
-        help="skip launching the web dashboard alongside",
-    ),
 ):
     """run the labeling pipeline on imgs.
 
@@ -107,13 +136,6 @@ def label(
     """
     cfg = loadCfg()
     modelName = model or cfg.get("default", "model", "anthropic")
-
-    if not no_web:
-        host = cfg.get("default", "web_host", "127.0.0.1")
-        port = int(cfg.get("default", "web_port", 7432))
-        t = threading.Thread(target=_startWeb, args=(host, port), daemon=True)
-        t.start()
-        con.print(f"[dim]web dashboard: http://{host}:{port}[/dim]")
 
     imgPaths = expandImgPaths(paths, recursive=recursive)
     if not imgPaths:
@@ -170,16 +192,64 @@ def label(
 
 
 @app.command()
-def serve(
-    host: str = typer.Option(None, "--host", help="bind addr (default 127.0.0.1)"),
-    port: int = typer.Option(None, "--port", help="bind port (default 7432)"),
+def web(
+    host: str = typer.Option(None, "--host", help="api bind addr (default 127.0.0.1)"),
+    api_port: int = typer.Option(None, "--api-port", help="fastapi port (default 7432)"),
+    ui_port: int = typer.Option(3000, "--ui-port", help="nextjs port"),
+    api_only: bool = typer.Option(
+        False, "--api-only",
+        help="just the fastapi backend, skip nextjs (for docker/headless)",
+    ),
 ):
-    """start the web dashboard (fastapi, foreground)."""
+    """launch the full web dashboard: fastapi backend + nextjs frontend together.
+
+    \b
+    open http://localhost:3000 once it's up.
+    ctrl-c stops both.
+    """
     cfg = loadCfg()
     h = host or cfg.get("default", "web_host", "127.0.0.1")
-    p = port or int(cfg.get("default", "web_port", 7432))
-    con.print(f"[green]serving on http://{h}:{p}[/green]")
-    _startWeb(h, p)
+    ap = api_port or int(cfg.get("default", "web_port", 7432))
+
+    if api_only:
+        con.print(f"[green]api on http://{h}:{ap}[/green]")
+        _startApi(h, ap)
+        return
+
+    webDir = _findWebDir()
+    if not webDir:
+        con.print("[red]can't find web/ dir - nextjs frontend missing[/red]")
+        con.print(f"[dim]falling back to api only on http://{h}:{ap}[/dim]")
+        _startApi(h, ap)
+        return
+
+    cmd = _npmCmd(webDir, ui_port)
+    if not cmd:
+        con.print("[red]npm not on PATH - install node to run the frontend[/red]")
+        con.print(f"[dim]falling back to api only on http://{h}:{ap}[/dim]")
+        _startApi(h, ap)
+        return
+
+    apiT = threading.Thread(target=_startApi, args=(h, ap), daemon=True)
+    apiT.start()
+    con.print(f"[dim]api: http://{h}:{ap}[/dim]")
+
+    con.print(f"[green]dashboard: http://localhost:{ui_port}[/green]")
+    con.print(f"[dim]starting nextjs from {webDir}...[/dim]")
+    ui = subprocess.Popen(cmd, cwd=webDir)
+
+    def stop(sig, frm):
+        con.print("\n[yellow]shutting down...[/yellow]")
+        ui.terminate()
+        try:
+            ui.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            ui.kill()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    ui.wait()
 
 
 @app.command()
@@ -298,9 +368,6 @@ def jobShow(job_id: str = typer.Argument(..., help="job id from history")):
 @app.callback(invoke_without_command=True)
 def _root(
     ctx: typer.Context,
-    web: bool = typer.Option(False, "--web", help="start web dashboard instead of tui"),
-    host: Optional[str] = typer.Option(None, "--host", help="web bind addr"),
-    port: Optional[int] = typer.Option(None, "--port", help="web bind port"),
     cfg_file: Optional[Path] = typer.Option(
         None, "--config", "-c",
         help="explicit yaml/toml config file (else auto-discover)",
@@ -311,15 +378,8 @@ def _root(
         os.environ["LABELDESK_CONFIG"] = str(cfg_file)
     if ctx.invoked_subcommand is not None:
         return
-    cfg = loadCfg(cfg_file)
-    if web:
-        h = host or cfg.get("default", "web_host", "127.0.0.1")
-        p = port or int(cfg.get("default", "web_port", 7432))
-        con.print(f"[green]web dashboard: http://{h}:{p}[/green]")
-        _startWeb(h, p)
-    else:
-        from labeldesk.tui.app import LabelDeskTui
-        LabelDeskTui().run()
+    from labeldesk.tui.app import LabelDeskTui
+    LabelDeskTui().run()
 
 
 def main():

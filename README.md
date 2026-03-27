@@ -15,12 +15,12 @@ uv sync --extra onnx    # local classifier
 ### as a package
 
 ```bash
-labeldesk                          # opens tui + web dashboard
+labeldesk                          # opens interactive tui (run jobs from terminal)
 labeldesk label ./photos           # label imgs in a dir
 labeldesk label ./photos -r        # recursive
 labeldesk label ./a.jpg ./b.png    # individual files
-labeldesk serve                    # web dashboard only
-labeldesk tui                      # settings tui only
+labeldesk web                      # full web dashboard (api :7432 + ui :3000)
+labeldesk web --api-only           # just the backend (docker/headless)
 ```
 
 ### cli commands
@@ -89,7 +89,17 @@ web/                   nextjs dashboard (proxies to :7432)
 
 ## web dashboard
 
-backend (fastapi, port 7432):
+one command brings up the whole stack:
+
+```bash
+labeldesk web          # fastapi on :7432 + nextjs on :3000, ctrl-c stops both
+```
+
+open http://localhost:3000 — nextjs proxies `/api/*` to the backend. first run needs `cd web && npm install`.
+
+flags: `--api-port`, `--ui-port`, `--host`, `--api-only` (skip nextjs, useful in containers).
+
+### backend api (fastapi, :7432)
 
 ```
 GET  /api/health
@@ -103,11 +113,9 @@ GET  /api/jobs/{id}       job status + results
 DELETE /api/jobs/{id}
 ```
 
-frontend (nextjs, port 3000):
+### frontend (nextjs, :3000)
 
-```bash
-cd web && npm install && npm run dev
-```
+`labeldesk web` auto-spawns `npm run dev` (or `npm start` if `.next/` is already built) from the bundled `web/` dir.
 
 pages: `/` (job list), `/upload` (drag-drop + opts), `/jobs/[id]` (live progress + download), `/settings`
 
@@ -263,9 +271,9 @@ drop imgs in `./imgs` and they're mounted read-only at `/imgs` in the container.
 
 | cmd | does |
 |---|---|
-| `labeldesk` | opens tui |
-| `labeldesk --web` | starts web dashboard (foreground) |
-| `labeldesk --web --port 8080` | custom port |
+| `labeldesk` | opens tui (run jobs interactively) |
+| `labeldesk web` | api + nextjs dashboard together |
+| `labeldesk web --api-only` | backend only (what the docker image runs) |
 | `labeldesk -c my.yaml ...` | explicit config file |
 
 ### releasing to pypi
