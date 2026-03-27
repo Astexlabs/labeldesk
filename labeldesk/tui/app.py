@@ -1,8 +1,11 @@
+from pathlib import Path
+
+from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
-    Button, DataTable, Footer, Header, Input, Label,
-    Select, Static, TabbedContent, TabPane,
+    Button, Checkbox, DataTable, Footer, Header, Input, Label,
+    Log, Select, Static, TabbedContent, TabPane,
 )
 
 from labeldesk.core.config import loadCfg
@@ -10,8 +13,12 @@ from labeldesk.core.models.registry import listAdapters
 from labeldesk.core.storage.job_store import JobStore
 
 
+MODES = ["title", "description", "both", "tags"]
+OUTPUTS = ["preview", "rename", "copy-rename", "csv", "json", "txt"]
+
+
 class LabelDeskTui(App):
-    """interactive settings + history tui"""
+    """interactive label runner + settings tui"""
 
     CSS = """
     Screen { align: center middle; }
@@ -22,6 +29,7 @@ class LabelDeskTui(App):
     Select { width: 50; }
     Button { margin: 0 1; }
     DataTable { height: 1fr; }
+    #run-log { height: 1fr; border: solid $primary; margin-top: 1; }
     #status { dock: bottom; height: 1; background: $boost; }
     """
 
@@ -34,11 +42,14 @@ class LabelDeskTui(App):
     def __init__(self):
         super().__init__()
         self.cfg = loadCfg()
+        self._jobBusy = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Container(id="main"):
-            with TabbedContent():
+            with TabbedContent(initial="tab-run"):
+                with TabPane("run", id="tab-run"):
+                    yield from self._runPane()
                 with TabPane("settings", id="tab-settings"):
                     yield from self._settingsPane()
                 with TabPane("api keys", id="tab-keys"):
@@ -51,6 +62,39 @@ class LabelDeskTui(App):
                     yield from self._cachePane()
         yield Static("ready", id="status")
         yield Footer()
+
+    def _runPane(self):
+        with Vertical():
+            with Horizontal(classes="row"):
+                yield Label("img folder:", classes="lbl")
+                yield Input(str(Path.cwd()), id="run-path",
+                            placeholder="path to imgs or dir")
+            with Horizontal(classes="row"):
+                yield Label("context:", classes="lbl")
+                yield Input("", id="run-ctx",
+                            placeholder="e.g. 'vacation pics from italy'")
+            with Horizontal(classes="row"):
+                yield Label("model:", classes="lbl")
+                yield Select([(a, a) for a in listAdapters()],
+                             value=self.cfg.get("default", "model"),
+                             id="run-model")
+            with Horizontal(classes="row"):
+                yield Label("mode:", classes="lbl")
+                yield Select([(m, m) for m in MODES],
+                             value=self.cfg.get("default", "mode", "title"),
+                             id="run-mode")
+            with Horizontal(classes="row"):
+                yield Label("output:", classes="lbl")
+                yield Select([(o, o) for o in OUTPUTS],
+                             value=self.cfg.get("default", "output", "preview"),
+                             id="run-output")
+            with Horizontal(classes="row"):
+                yield Label("", classes="lbl")
+                yield Checkbox("recursive (scan subdirs)", id="run-recursive")
+            with Horizontal(classes="row"):
+                yield Button("scan", id="run-scan")
+                yield Button("run labeling", variant="success", id="run-go")
+            yield Log(id="run-log", highlight=True)
 
     def _settingsPane(self):
         with VerticalScroll():
@@ -144,9 +188,109 @@ class LabelDeskTui(App):
     def _say(self, msg: str):
         self.query_one("#status", Static).update(msg)
 
+    def _log(self, msg: str):
+        self.query_one("#run-log", Log).write_line(msg)
+
+    def _grabRunOpts(self) -> dict:
+        return {
+            "path": self.query_one("#run-path", Input).value.strip(),
+            "ctx": self.query_one("#run-ctx", Input).value.strip(),
+            "model": self.query_one("#run-model", Select).value,
+            "mode": self.query_one("#run-mode", Select).value,
+            "output": self.query_one("#run-output", Select).value,
+            "recursive": self.query_one("#run-recursive", Checkbox).value,
+        }
+
+    def _scanImgs(self, opts: dict | None = None):
+        from labeldesk.core.paths import expandImgPaths
+        opts = opts or self._grabRunOpts()
+        if not opts["path"]:
+            self._log("! no path given")
+            return []
+        imgs = expandImgPaths([opts["path"]], recursive=opts["recursive"])
+        self._log(f"found {len(imgs)} imgs in {opts['path']}")
+        if not imgs:
+            self._log("  (nothing to do - check path or try recursive)")
+        return imgs
+
+    @work(thread=True, exclusive=True)
+    def _runJob(self, opts: dict, imgs: list):
+        from labeldesk.core.models.base import ModelCfg
+        from labeldesk.core.models.registry import getAdapter
+        from labeldesk.core.output.formatters import fmtResults
+        from labeldesk.pipeline.runner import PipelineRunner
+
+        mName = opts["model"]
+        sec = self.cfg.section(mName)
+        try:
+            adapter = getAdapter(mName, ModelCfg(
+                apiKey=self.cfg.get(mName, "api_key", ""),
+                modelId=sec.get("model_id", ""),
+                maxToks=sec.get("max_tokens", 300),
+                host=sec.get("host", ""),
+            ))
+            self.call_from_thread(self._log, f"using {mName}")
+        except Exception as e:
+            self.call_from_thread(self._log, f"! no adapter ({e}) - heuristic only")
+            adapter = None
+
+        store = JobStore()
+        job = store.create(
+            inputPaths=[str(p) for p in imgs], adapter=mName,
+            mode=opts["mode"], outputFmt=opts["output"], totalFiles=len(imgs),
+        )
+        self.call_from_thread(self._log, f"job {job.id} started")
+
+        def tick(msg, done, total):
+            job.doneFiles = done
+            store.update(job)
+            self.call_from_thread(self._say, f"{msg} {done}/{total}")
+
+        runner = PipelineRunner(
+            adapter=adapter, modelName=mName, mode=opts["mode"],
+            batchSz=int(self.cfg.get("default", "batch_size", 5)),
+            collectionCtx=opts["ctx"], progressCb=tick,
+        )
+        try:
+            results = runner.processMany([opts["path"]], recursive=opts["recursive"])
+        finally:
+            runner.close()
+
+        job.status = "done"
+        job.results = {k: v.asDict() for k, v in results.items()}
+        store.update(job)
+        store.close()
+
+        out = fmtResults(results, opts["output"])
+        self.call_from_thread(self._log, "--- results ---")
+        for line in out.splitlines():
+            self.call_from_thread(self._log, line)
+        self.call_from_thread(self._log, f"done ({len(results)} imgs)")
+        self.call_from_thread(self._say, "done")
+        self.call_from_thread(self._loadHistory)
+
+    def on_worker_state_changed(self, ev):
+        if ev.worker.is_finished:
+            self._jobBusy = False
+
     def on_button_pressed(self, ev: Button.Pressed):
         bid = ev.button.id
-        if bid == "save-settings":
+        if bid == "run-scan":
+            self.query_one("#run-log", Log).clear()
+            self._scanImgs()
+        elif bid == "run-go":
+            if self._jobBusy:
+                self._say("already running")
+                return
+            self.query_one("#run-log", Log).clear()
+            opts = self._grabRunOpts()
+            imgs = self._scanImgs(opts)
+            if not imgs:
+                return
+            self._jobBusy = True
+            self._say("running...")
+            self._runJob(opts, imgs)
+        elif bid == "save-settings":
             self.cfg.set("default", "model", self.query_one("#default-model", Select).value)
             self.cfg.set("default", "mode", self.query_one("#default-mode", Select).value)
             self.cfg.set("default", "output", self.query_one("#default-output", Select).value)

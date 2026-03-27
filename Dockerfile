@@ -21,4 +21,4 @@ VOLUME /data
 EXPOSE 7432
 
 ENTRYPOINT ["uv", "run", "labeldesk"]
-CMD ["--web"]
+CMD ["web", "--api-only"]
