@@ -2,8 +2,9 @@
 # env vars override: LABELDESK_<SECTION>_<KEY>
 
 default:
-  model: anthropic        # anthropic | openai | gemini | ollama
+  model: anthropic        # anthropic | openai | gemini | groq | lightning | ollama
   mode: title             # title | description | both | tags | full
+  fields: ""              # schema preset or comma list, e.g. "dataset" or "title,tags,objects"
   output: preview         # preview | rename | copy-rename | csv | json | txt
   batch_size: 5
   web_host: 127.0.0.1
@@ -23,6 +24,17 @@ openai:
 gemini:
   api_key: ""
   model_id: gemini-1.5-flash
+  max_tokens: 300
+
+groq:
+  api_key: ""
+  model_id: llama-3.2-11b-vision-preview
+  max_tokens: 300
+
+lightning:
+  api_key: ""
+  host: ""                # ur lightning studio endpoint url
+  model_id: lightning-vision
   max_tokens: 300
 
 ollama:

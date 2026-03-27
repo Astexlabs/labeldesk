@@ -15,6 +15,8 @@ from rich.table import Table
 from labeldesk.core.config import loadCfg
 from labeldesk.core.models.base import ModelCfg
 from labeldesk.core.models.registry import getAdapter, listAdapters, adapterInfo
+from labeldesk.core.paths import credsPath
+from labeldesk.core.models.schema import allFields, PRESETS
 from labeldesk.core.output.formatters import fmtResults
 from labeldesk.core.paths import expandImgPaths
 from labeldesk.core.storage.job_store import JobStore
@@ -25,19 +27,22 @@ app = typer.Typer(
 
 \b
 quick start:
-  labeldesk                      open interactive tui (pick folder + run)
-  labeldesk label ./pics         label a folder right now
-  labeldesk web                  launch web dashboard (api + ui)
-  labeldesk config show          see current settings
-  labeldesk models list          check which ai backends are ready""",
+  labeldesk                            open interactive tui
+  labeldesk label ./pics -m groq       label a folder (asks for key if missing)
+  labeldesk providers                  list ai providers + connection status
+  labeldesk providers connect groq     enter + save api key for a provider
+  labeldesk web                        launch web dashboard
+  labeldesk schema                     see all label fields u can extract""",
     no_args_is_help=False,
     rich_markup_mode="rich",
 )
 cfgApp = typer.Typer(help="get/set config values (model, api keys, defaults)")
 modelsApp = typer.Typer(help="list + test ai model backends")
+provApp = typer.Typer(help="manage ai providers (anthropic, groq, lightning, ...)")
 jobApp = typer.Typer(help="browse past labeling runs")
 app.add_typer(cfgApp, name="config")
 app.add_typer(modelsApp, name="models")
+app.add_typer(provApp, name="providers")
 app.add_typer(jobApp, name="job")
 
 con = Console()
@@ -90,12 +95,47 @@ def _mkAdapter(name: str, cfg):
     return getAdapter(name, mcfg)
 
 
+def _promptCreds(name: str, cfg, force: bool = False) -> bool:
+    """ask for any missing creds on a provider, save em. returns True if we saved."""
+    info = adapterInfo(name)
+    missing = [c for c in info["creds"]
+               if force or not cfg.get(name, c["key"], c.get("default", ""))]
+    if not missing:
+        return False
+    con.print(f"\n[bold]{info['displayName']}[/bold] needs setup:")
+    for c in missing:
+        dflt = cfg.get(name, c["key"], "") or c.get("default", "")
+        if c.get("hint"):
+            con.print(f"  [dim]{c['hint']}[/dim]")
+        val = typer.prompt(f"  {c['label']}", default=dflt or None,
+                           hide_input=c.get("secret", False))
+        if val:
+            cfg.set(name, c["key"], val)
+    cfg.save()
+    con.print(f"[dim]saved → {credsPath()} (mode 600)[/dim]")
+    return True
+
+
+def _parseModel(spec: str, cfg) -> tuple[str, str]:
+    """accept 'provider' or 'provider/model' -> (provider, modelId)"""
+    if "/" in spec:
+        p, m = spec.split("/", 1)
+        return p, m
+    return spec, cfg.section(spec).get("model_id", "")
+
+
 @app.command()
 def label(
     paths: list[str] = typer.Argument(..., help="img files or dirs to label"),
     model: Optional[str] = typer.Option(
         None, "--model", "-m",
-        help="ai backend: anthropic | openai | gemini | ollama (default from config)",
+        help="provider or provider/model e.g. 'groq' or 'groq/llama-3.2-90b-vision-preview'. "
+             "providers: anthropic · openai · gemini · groq · lightning · ollama. "
+             "run 'labeldesk providers' to see all",
+    ),
+    no_prompt: bool = typer.Option(
+        False, "--no-prompt",
+        help="dont ask for missing api keys interactively (useful in ci)",
     ),
     mode: str = typer.Option(
         "title", "--mode",
@@ -121,6 +161,11 @@ def label(
         "", "--ctx",
         help="collection hint, e.g. 'wedding photos' - improves labels",
     ),
+    fields: Optional[str] = typer.Option(
+        None, "--fields", "-f",
+        help="schema fields to extract: preset (basic|dataset|rename|full) "
+             "or comma list e.g. 'title,tags,quality_score'. see: labeldesk schema",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="estimate cost + count imgs, don't actually run",
@@ -135,7 +180,11 @@ def label(
       labeldesk label a.jpg b.png --ctx "product shots" --dry-run
     """
     cfg = loadCfg()
-    modelName = model or cfg.get("default", "model", "anthropic")
+    spec = model or cfg.get("default", "model", "anthropic")
+    modelName, midOverride = _parseModel(spec, cfg)
+    if midOverride:
+        cfg.set(modelName, "model_id", midOverride)
+    fieldSpec = fields or cfg.get("default", "fields", None)
 
     imgPaths = expandImgPaths(paths, recursive=recursive)
     if not imgPaths:
@@ -146,6 +195,16 @@ def label(
 
     try:
         adapter = _mkAdapter(modelName, cfg)
+        if not adapter.isAvail() and not no_prompt and sys.stdin.isatty():
+            if _promptCreds(modelName, cfg):
+                adapter = _mkAdapter(modelName, cfg)
+        if not adapter.isAvail():
+            info = adapterInfo(modelName)
+            need = ", ".join(c["label"] for c in info["creds"])
+            con.print(f"[yellow]{info['displayName']} not connected "
+                      f"(needs: {need}) — running heuristic-only[/yellow]")
+            con.print(f"[dim]  connect with: labeldesk providers connect {modelName}[/dim]")
+            adapter = None
     except Exception as e:
         con.print(f"[yellow]no adapter ({e}), running heuristic-only[/yellow]")
         adapter = None
@@ -177,7 +236,8 @@ def label(
 
         runner = PipelineRunner(
             adapter=adapter, modelName=modelName, mode=mode,
-            batchSz=batch_size, collectionCtx=ctx, progressCb=tick,
+            batchSz=batch_size, collectionCtx=ctx,
+            fields=fieldSpec, progressCb=tick,
         )
         results = runner.processMany(paths, recursive=recursive)
         runner.close()
@@ -259,6 +319,26 @@ def tui():
     LabelDeskTui().run()
 
 
+@app.command()
+def schema():
+    """show all label fields u can ask the model for (use with --fields)."""
+    from labeldesk.core.models.schema import getSpec
+    tbl = Table(title="label schema fields")
+    tbl.add_column("field", style="cyan")
+    tbl.add_column("type", style="dim")
+    tbl.add_column("what it returns")
+    for f in allFields():
+        s = getSpec(f)
+        tbl.add_row(f, s.kind, s.prompt)
+    con.print(tbl)
+    con.print("\n[bold]presets:[/bold]")
+    for name, flds in PRESETS.items():
+        con.print(f"  [cyan]{name}[/cyan]: {', '.join(flds)}")
+    con.print("\n[dim]use: labeldesk label ./imgs --fields dataset[/dim]")
+    con.print("[dim]or:  labeldesk label ./imgs --fields title,tags,objects[/dim]")
+    con.print("[dim]set default: labeldesk config set default.fields dataset[/dim]")
+
+
 @cfgApp.command("set")
 def cfgSet(
     key: str = typer.Argument(..., help="section.key, e.g. anthropic.api_key"),
@@ -323,6 +403,62 @@ def _modelRows(cfg):
         yield name, info, mid, ok, why, (name == dflt)
 
 
+@provApp.command("list")
+def provList():
+    """show every provider, its models, and connection status."""
+    cfg = loadCfg()
+    dflt = cfg.get("default", "model", "")
+    tbl = Table(title="providers", show_lines=False)
+    tbl.add_column("", width=2)
+    tbl.add_column("provider", style="bold")
+    tbl.add_column("models", style="dim")
+    tbl.add_column("status")
+    for name in listAdapters():
+        info = adapterInfo(name)
+        try:
+            ok = _mkAdapter(name, cfg).isAvail()
+        except Exception:
+            ok = False
+        mark = "[cyan]●[/cyan]" if name == dflt else " "
+        stat = "[green]connected[/green]" if ok else "[dim]not set up[/dim]"
+        mdls = ", ".join(info["models"][:2])
+        if len(info["models"]) > 2:
+            mdls += f", +{len(info['models']) - 2}"
+        tbl.add_row(mark, info["displayName"], mdls or "-", stat)
+    con.print(tbl)
+    con.print("[dim]● = default · connect one: labeldesk providers connect <name>[/dim]")
+
+
+@provApp.command("connect")
+def provConnect(
+    name: str = typer.Argument(..., help="provider name e.g. groq, lightning, anthropic"),
+    default: bool = typer.Option(False, "--default", "-d", help="also make it the default"),
+):
+    """enter api key/host for a provider, saved securely for reuse."""
+    cfg = loadCfg()
+    if name not in listAdapters():
+        con.print(f"[red]unknown provider '{name}'[/red]")
+        con.print(f"[dim]options: {', '.join(listAdapters())}[/dim]")
+        raise typer.Exit(1)
+    _promptCreds(name, cfg, force=True)
+    if default:
+        cfg.set("default", "model", name)
+        cfg.save()
+    try:
+        if _mkAdapter(name, cfg).isAvail():
+            con.print(f"[green]✓ {adapterInfo(name)['displayName']} connected[/green]")
+        else:
+            con.print("[yellow]saved but adapter still reports not-ready — check values[/yellow]")
+    except Exception as e:
+        con.print(f"[red]{e}[/red]")
+
+
+@provApp.callback(invoke_without_command=True)
+def _provRoot(ctx: typer.Context):
+    if ctx.invoked_subcommand is None:
+        provList()
+
+
 @modelsApp.command("list")
 def modelsList():
     """show every ai backend w display name, model id, status."""
@@ -343,37 +479,42 @@ def modelsList():
 
 @modelsApp.command("pick")
 def modelsPick():
-    """interactively pick default model + set its key if needed."""
+    """interactively pick a provider + model, enter creds if missing."""
     cfg = loadCfg()
     rows = list(_modelRows(cfg))
-    con.print("[bold]pick a default model:[/bold]\n")
+    con.print("[bold]pick a provider:[/bold]\n")
     for i, (name, info, mid, ok, why, isDflt) in enumerate(rows, 1):
-        stat = "[green]ready[/green]" if ok else f"[yellow]{why}[/yellow]"
+        stat = "[green]connected[/green]" if ok else f"[yellow]{why}[/yellow]"
         mark = "[cyan]●[/cyan] " if isDflt else "  "
-        con.print(f"  {mark}[bold]{i}[/bold]. {info['displayName']:<22} "
-                  f"[dim]{mid}[/dim]  {stat}")
+        con.print(f"  {mark}[bold]{i}[/bold]. {info['displayName']:<22} {stat}")
         con.print(f"       [dim]{info['desc']}[/dim]")
     n = typer.prompt("\nnumber", type=int)
     if not 1 <= n <= len(rows):
         con.print("[red]bad pick[/red]")
         raise typer.Exit(1)
-    name, info, mid, ok, why, _ = rows[n - 1]
+    name, info, mid, ok, _, _ = rows[n - 1]
+
+    if not ok:
+        _promptCreds(name, cfg)
+
+    models = info.get("models", [])
+    if models:
+        con.print(f"\n[bold]pick a model for {info['displayName']}:[/bold]")
+        for i, m in enumerate(models, 1):
+            mark = "[cyan]●[/cyan] " if m == mid else "  "
+            con.print(f"  {mark}[bold]{i}[/bold]. [dim]{m}[/dim]")
+        mi = typer.prompt("number (or enter custom id)", default="1")
+        if mi.isdigit() and 1 <= int(mi) <= len(models):
+            newMid = models[int(mi) - 1]
+        else:
+            newMid = mi
+    else:
+        newMid = typer.prompt("model id", default=mid)
+
     cfg.set("default", "model", name)
-
-    if not ok and info["needs"] == "api_key":
-        key = typer.prompt(f"{info['displayName']} api key", hide_input=True, default="")
-        if key:
-            cfg.set(name, "api_key", key)
-    elif not ok and info["needs"] == "host":
-        host = typer.prompt("ollama host", default="http://localhost:11434")
-        cfg.set(name, "host", host)
-
-    newMid = typer.prompt("model id", default=mid)
-    if newMid != mid:
-        cfg.set(name, "model_id", newMid)
-
+    cfg.set(name, "model_id", newMid)
     cfg.save()
-    con.print(f"[green]✓ default → {info['displayName']} ({newMid})[/green]")
+    con.print(f"\n[green]✓ default → {info['displayName']} / {newMid}[/green]")
 
 
 @modelsApp.command("test")

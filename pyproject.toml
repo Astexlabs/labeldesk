@@ -30,6 +30,7 @@ ai = [
     "anthropic>=0.25",
     "openai>=1.0",
     "google-generativeai>=0.5",
+    "groq>=0.9",
 ]
 onnx = ["onnxruntime>=1.17"]
 

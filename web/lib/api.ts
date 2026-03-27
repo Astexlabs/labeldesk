@@ -33,6 +33,7 @@ async function req(path: string, init?: RequestInit) {
 }
 
 export const getModels = () => req('/api/models');
+export const getProviders = () => req('/api/providers');
 export const getJobs = () => req('/api/jobs');
 export const getJob = (id: string) => req(`/api/jobs/${id}`);
 export const getConfig = () => req('/api/config');
