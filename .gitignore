@@ -23,3 +23,8 @@ web/.next/
 web/node_modules/
 
 example/
+
+# user config (keep .example)
+labeldesk.yaml
+labeldesk.yml
+config.yaml

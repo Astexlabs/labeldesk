@@ -219,3 +219,71 @@ add to claude desktop config:
 - the `adapter=None` fallback (heuristic-only) means mcp works even with zero api keys configured — useful for quick metadata extraction
 
 add `mcp>=1.0` to optional deps, new cli subcommand `labeldesk mcp` that calls `stdio_server(srv)`.
+
+---
+
+## deployment
+
+### quick start
+
+```bash
+./setup.sh
+```
+
+handles uv install, dep sync, config seed, test run, and launch prompt.
+
+### config via yaml
+
+drop `labeldesk.yaml` in cwd or `~/.labeldesk/`:
+
+```bash
+cp labeldesk.yaml.example labeldesk.yaml
+# edit api keys
+labeldesk -c labeldesk.yaml label ./imgs
+```
+
+lookup order: `cwd/labeldesk.yaml` > `~/.labeldesk/config.yaml` > `~/.labeldesk/config.toml`. env vars (`LABELDESK_<SECTION>_<KEY>`) override everything.
+
+### docker
+
+```bash
+docker compose up                    # labeldesk + ollama
+docker compose --profile frontend up # + nextjs on :3000
+```
+
+the compose stack:
+- `labeldesk` — api on `:7432`, data volume at `/data`
+- `ollama` — local llm on `:11434`, auto-wired
+- `web` (profile) — nextjs dev server on `:3000`
+
+drop imgs in `./imgs` and they're mounted read-only at `/imgs` in the container.
+
+### simplified cli
+
+| cmd | does |
+|---|---|
+| `labeldesk` | opens tui |
+| `labeldesk --web` | starts web dashboard (foreground) |
+| `labeldesk --web --port 8080` | custom port |
+| `labeldesk -c my.yaml ...` | explicit config file |
+
+### releasing to pypi
+
+tag-based trigger — no commit-message parsing, no accidental publishes:
+
+```bash
+# bump version in pyproject.toml
+git commit -am "release: v0.3.0"
+git tag v0.3.0
+git push origin main --tags
+```
+
+`.github/workflows/publish.yml` then:
+1. verifies tag is on `main` (not a feature branch)
+2. runs full test suite
+3. asserts tag matches `pyproject.toml` version
+4. builds wheel + sdist
+5. publishes via **oidc trusted publishing** (no token in secrets)
+6. creates github release with auto-generated notes
+
+ci runs on every push/pr to main but never publishes — only tags do.

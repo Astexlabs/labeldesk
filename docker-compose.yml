@@ -1,0 +1,44 @@
+services:
+  labeldesk:
+    build: .
+    ports:
+      - "7432:7432"
+    volumes:
+      - labeldesk-data:/data
+      - ./imgs:/imgs:ro
+    environment:
+      - LABELDESK_DEFAULT_MODEL=${LABELDESK_MODEL:-ollama}
+      - LABELDESK_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LABELDESK_OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LABELDESK_GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - LABELDESK_OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./web:/app
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API=http://localhost:7432
+    command: sh -c "npm install && npm run dev"
+    depends_on:
+      - labeldesk
+    profiles:
+      - frontend
+
+volumes:
+  labeldesk-data:
+  ollama-data:

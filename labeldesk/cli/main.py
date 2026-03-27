@@ -1,3 +1,4 @@
+import os
 import threading
 from pathlib import Path
 from typing import Optional
@@ -241,15 +242,25 @@ def jobShow(job_id: str):
 
 
 @app.callback(invoke_without_command=True)
-def _root(ctx: typer.Context):
-    """run w/o subcmd -> start web + tui"""
-    if ctx.invoked_subcommand is None:
-        cfg = loadCfg()
-        host = cfg.get("default", "web_host", "127.0.0.1")
-        port = int(cfg.get("default", "web_port", 7432))
-        t = threading.Thread(target=_startWeb, args=(host, port), daemon=True)
-        t.start()
-        con.print(f"[green]web: http://{host}:{port}[/green]")
+def _root(
+    ctx: typer.Context,
+    web: bool = typer.Option(False, "--web", help="start web dashboard"),
+    host: Optional[str] = typer.Option(None, "--host"),
+    port: Optional[int] = typer.Option(None, "--port"),
+    cfg_file: Optional[Path] = typer.Option(None, "--config", "-c", help="path to yaml/toml cfg"),
+):
+    """bare cmd -> tui. --web -> web dashboard."""
+    if cfg_file:
+        os.environ["LABELDESK_CONFIG"] = str(cfg_file)
+    if ctx.invoked_subcommand is not None:
+        return
+    cfg = loadCfg(cfg_file)
+    if web:
+        h = host or cfg.get("default", "web_host", "127.0.0.1")
+        p = port or int(cfg.get("default", "web_port", 7432))
+        con.print(f"[green]web dashboard: http://{h}:{p}[/green]")
+        _startWeb(h, p)
+    else:
         from labeldesk.tui.app import LabelDeskTui
         LabelDeskTui().run()
 

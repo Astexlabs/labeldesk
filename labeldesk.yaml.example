@@ -1,0 +1,41 @@
+# labeldesk config - copy to labeldesk.yaml or ~/.labeldesk/config.yaml
+# env vars override: LABELDESK_<SECTION>_<KEY>
+
+default:
+  model: anthropic        # anthropic | openai | gemini | ollama
+  mode: title             # title | description | both | tags | full
+  output: preview         # preview | rename | copy-rename | csv | json | txt
+  batch_size: 5
+  web_host: 127.0.0.1
+  web_port: 7432
+  recursive: false
+
+anthropic:
+  api_key: ""
+  model_id: claude-haiku-4-5-20251001
+  max_tokens: 300
+
+openai:
+  api_key: ""
+  model_id: gpt-4o-mini
+  max_tokens: 300
+
+gemini:
+  api_key: ""
+  model_id: gemini-1.5-flash
+  max_tokens: 300
+
+ollama:
+  host: http://localhost:11434
+  model_id: llava
+  max_tokens: 300
+
+cost:
+  warn_above_usd: 0.50
+  abort_above_usd: 5.00
+
+pipeline:
+  max_img_side: 768       # resize before ai
+  jpeg_quality: 75
+  cache_ttl_days: 30
+  onnx_model: ""          # path to local classifier
